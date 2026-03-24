@@ -2,16 +2,17 @@
 set -euo pipefail
 
 # ==========================================
-# Caddy 核心管理脚本 (L4 分流增强版 v7.3)
+# Caddy 核心管理脚本 (L4 分流增强版 v7.4)
 # ==========================================
-SCRIPT_VERSION="7.3"
+SCRIPT_VERSION="7.4"
 CADDYFILE="/etc/caddy/Caddyfile"
 CADDY_BIN="/usr/bin/caddy"
 SERVICE_FILE="/etc/systemd/system/caddy.service"
 SHORTCUT="/usr/local/bin/c"
 
-# GitHub 仓库信息 (用于动态获取最新版本)
+# GitHub 仓库信息
 REPO_URL="https://github.com/Tangfffyx/custom-caddy"
+SCRIPT_URL="https://raw.githubusercontent.com/Tangfffyx/custom-caddy/refs/heads/main/caddy.sh"
 
 # 颜色定义
 RED='\033[0;31m'
@@ -28,6 +29,15 @@ need_root() {
   if [[ "${EUID}" -ne 0 ]]; then
     echo -e "${RED}[错误] 请使用 root 权限运行${NC}"
     exit 1
+  fi
+}
+
+# 修复系统 sudo 无法解析主机名的警告 (自愈功能)
+fix_hostname_resolve() {
+  local current_hostname
+  current_hostname=$(hostname 2>/dev/null || true)
+  if [[ -n "$current_hostname" ]] && ! grep -q -w "${current_hostname}" /etc/hosts 2>/dev/null; then
+    echo "127.0.0.1 ${current_hostname}" >> /etc/hosts 2>/dev/null || true
   fi
 }
 
@@ -78,7 +88,6 @@ check_domain_exists() {
 init_caddyfile_skeleton() {
   mkdir -p /etc/caddy
   mkdir -p /var/log/caddy
-  # 骨架中设定 WARN 级别，10MB 轮转，且仅保留 1 份备份文件
   cat << 'EOF' > "${CADDYFILE}"
 {
     log {
@@ -330,13 +339,8 @@ option_view_logs() {
   echo -e "${YEL}正在查看实时日志，按 Ctrl + C 退出${NC}"
   echo "------------------------------------------------------"
   
-  # 拦截 Ctrl+C 信号(SIGINT)，使其仅退出 tail 命令并平滑回到脚本
   trap 'echo -e "\n${GRN}[退出] 已切回主菜单。${NC}"; sleep 0.5' INT
-
-  # 使用 || true 防止 set -e 在 tail 被中断退出时将整个脚本终止
   tail -n 10 -f "${log_file}" || true
-
-  # 恢复默认的系统级 Ctrl+C 行为
   trap - INT
 }
 
@@ -413,17 +417,22 @@ show_menu() {
   echo -n "请选择 [0-8]: "
 }
 
+# 全新设计的快捷键逻辑：解决 bash -c 内存运行无法覆盖旧版快捷键的问题
 setup_shortcut() {
-  if [[ ! -f "${SHORTCUT}" ]]; then
-    cp "$0" "${SHORTCUT}"
-    chmod +x "${SHORTCUT}"
-    echo -e "${GRN}[提示] 全局快捷键已配置，下次可直接输入 c 呼出本菜单。${NC}"
-    sleep 2
+  # 如果当前运行的进程不是 /usr/local/bin/c 本身，说明是远程拉取或通过其他文件运行
+  if [[ "$0" != "${SHORTCUT}" ]]; then
+    # 强制从你的 GitHub 仓库拉取最新版并写入快捷键路径
+    if curl -fsSL "${SCRIPT_URL}" -o "${SHORTCUT}" 2>/dev/null; then
+      chmod +x "${SHORTCUT}" 2>/dev/null || true
+      echo -e "${GRN}[提示] 全局快捷键 'c' 已更新至 v${SCRIPT_VERSION}。${NC}"
+      sleep 1
+    fi
   fi
 }
 
 main() {
   need_root
+  fix_hostname_resolve
   setup_shortcut
   while true; do
     show_menu
