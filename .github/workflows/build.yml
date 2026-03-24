@@ -1,0 +1,85 @@
+name: Auto Build Custom Caddy with L4
+
+# 触发条件
+on:
+  schedule:
+    # 每周一的凌晨 2:00 (UTC时间，约北京时间上午 10:00) 自动运行一次
+    - cron: '0 2 * * 1'
+  workflow_dispatch: # 保留手动触发按钮，以备不时之需
+
+# 声明权限：允许这个脚本在你的仓库里创建 Release 发布页
+permissions:
+  contents: write
+
+jobs:
+  check-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 1. 检查并对比 Caddy 版本
+        id: version_check
+        run: |
+          # 获取 Caddy 官方最新 release 的版本号 (例如: v2.7.6)
+          OFFICIAL_TAG=$(curl -sL https://api.github.com/repos/caddyserver/caddy/releases/latest | jq -r .tag_name)
+          echo "官方最新版本: $OFFICIAL_TAG"
+          
+          # 获取你自己仓库最新 release 的版本号
+          MY_TAG=$(curl -sL -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" https://api.github.com/repos/${{ github.repository }}/releases/latest | jq -r .tag_name)
+          if [ "$MY_TAG" == "null" ]; then MY_TAG="none"; fi
+          echo "当前我的版本: $MY_TAG"
+          
+          # 对比版本号决定是否编译
+          if [ "$OFFICIAL_TAG" == "$MY_TAG" ]; then
+            echo "版本一致，无需更新，跳过编译。"
+            echo "should_build=false" >> $GITHUB_OUTPUT
+          else
+            echo "发现新版本，开始执行编译流程！"
+            echo "should_build=true" >> $GITHUB_OUTPUT
+            echo "official_tag=$OFFICIAL_TAG" >> $GITHUB_OUTPUT
+          fi
+
+      # ---------------- 以下步骤只有在 should_build 为 true 时才会执行 ----------------
+
+      - name: 2. 配置 Go 环境
+        if: steps.version_check.outputs.should_build == 'true'
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: 3. 安装 xcaddy 编译工具
+        if: steps.version_check.outputs.should_build == 'true'
+        run: go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
+
+      - name: 4. 编译 AMD64 版本
+        if: steps.version_check.outputs.should_build == 'true'
+        env:
+          GOOS: linux
+          GOARCH: amd64
+        run: |
+          # 核心改动：精确指定官方版本号进行编译，确保完全同步
+          ~/go/bin/xcaddy build ${{ steps.version_check.outputs.official_tag }} \
+            --with github.com/mholt/caddy-l4 \
+            --output caddy-linux-amd64
+
+      - name: 5. 编译 ARM64 版本
+        if: steps.version_check.outputs.should_build == 'true'
+        env:
+          GOOS: linux
+          GOARCH: arm64
+        run: |
+          ~/go/bin/xcaddy build ${{ steps.version_check.outputs.official_tag }} \
+            --with github.com/mholt/caddy-l4 \
+            --output caddy-linux-arm64
+
+      - name: 6. 自动发布 Release
+        if: steps.version_check.outputs.should_build == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          # 使用官方版本号作为发布标签和标题
+          tag_name: ${{ steps.version_check.outputs.official_tag }}
+          name: Custom Caddy ${{ steps.version_check.outputs.official_tag }}
+          body: "自动追踪 Caddy 官方更新，内嵌 caddy-l4 四层代理插件。"
+          files: |
+            caddy-linux-amd64
+            caddy-linux-arm64
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
