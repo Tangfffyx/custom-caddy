@@ -1,15 +1,16 @@
 name: Auto Build Custom Caddy with L4
 
-# 触发条件
 on:
   schedule:
-    # 每周一的凌晨 2:00 (UTC时间，约北京时间上午 10:00) 自动运行一次
     - cron: '0 2 * * 1'
-  workflow_dispatch: # 保留手动触发按钮，以备不时之需
+  workflow_dispatch:
 
-# 声明权限：允许这个脚本在你的仓库里创建 Release 发布页
 permissions:
   contents: write
+
+# 【修复警告 2】强制底层环境使用 Node.js 24，消除弃用警告
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   check-and-build:
@@ -18,16 +19,13 @@ jobs:
       - name: 1. 检查并对比 Caddy 版本
         id: version_check
         run: |
-          # 获取 Caddy 官方最新 release 的版本号 (例如: v2.7.6)
           OFFICIAL_TAG=$(curl -sL https://api.github.com/repos/caddyserver/caddy/releases/latest | jq -r .tag_name)
           echo "官方最新版本: $OFFICIAL_TAG"
           
-          # 获取你自己仓库最新 release 的版本号
           MY_TAG=$(curl -sL -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" https://api.github.com/repos/${{ github.repository }}/releases/latest | jq -r .tag_name)
           if [ "$MY_TAG" == "null" ]; then MY_TAG="none"; fi
           echo "当前我的版本: $MY_TAG"
           
-          # 对比版本号决定是否编译
           if [ "$OFFICIAL_TAG" == "$MY_TAG" ]; then
             echo "版本一致，无需更新，跳过编译。"
             echo "should_build=false" >> $GITHUB_OUTPUT
@@ -37,13 +35,13 @@ jobs:
             echo "official_tag=$OFFICIAL_TAG" >> $GITHUB_OUTPUT
           fi
 
-      # ---------------- 以下步骤只有在 should_build 为 true 时才会执行 ----------------
-
       - name: 2. 配置 Go 环境
         if: steps.version_check.outputs.should_build == 'true'
         uses: actions/setup-go@v5
         with:
           go-version: '1.22'
+          # 【修复警告 1】关闭默认的依赖缓存，因为仓库中没有 go.sum 文件
+          cache: false 
 
       - name: 3. 安装 xcaddy 编译工具
         if: steps.version_check.outputs.should_build == 'true'
@@ -55,7 +53,6 @@ jobs:
           GOOS: linux
           GOARCH: amd64
         run: |
-          # 核心改动：精确指定官方版本号进行编译，确保完全同步
           ~/go/bin/xcaddy build ${{ steps.version_check.outputs.official_tag }} \
             --with github.com/mholt/caddy-l4 \
             --output caddy-linux-amd64
@@ -74,7 +71,6 @@ jobs:
         if: steps.version_check.outputs.should_build == 'true'
         uses: softprops/action-gh-release@v2
         with:
-          # 使用官方版本号作为发布标签和标题
           tag_name: ${{ steps.version_check.outputs.official_tag }}
           name: Custom Caddy ${{ steps.version_check.outputs.official_tag }}
           body: "自动追踪 Caddy 官方更新，内嵌 caddy-l4 四层代理插件。"
