@@ -2,9 +2,9 @@
 set -euo pipefail
 
 # ==========================================
-# Caddy 核心管理脚本 (L4 分流增强版 v7.4)
+# Caddy 核心管理脚本 (L4 分流增强版 v7.5)
 # ==========================================
-SCRIPT_VERSION="7.4"
+SCRIPT_VERSION="7.5"
 CADDYFILE="/etc/caddy/Caddyfile"
 CADDY_BIN="/usr/bin/caddy"
 SERVICE_FILE="/etc/systemd/system/caddy.service"
@@ -246,6 +246,11 @@ EOF
     
     read -r -p "请输入反代目标 (如 127.0.0.1:5000 或 www.example.com): " target
     [[ -z "${target}" ]] && { echo -e "${RED}[警告] 输入不能为空！${NC}"; pause_return_menu; return; }
+
+    # 智能补全：如果输入的是纯数字端口，自动拼接 127.0.0.1:
+    if [[ "$target" =~ ^[0-9]+$ ]]; then
+      target="127.0.0.1:${target}"
+    fi
     
     local ws_path=""
     if [[ "$l7_mode" == "2" ]]; then
@@ -417,11 +422,8 @@ show_menu() {
   echo -n "请选择 [0-8]: "
 }
 
-# 全新设计的快捷键逻辑：解决 bash -c 内存运行无法覆盖旧版快捷键的问题
 setup_shortcut() {
-  # 如果当前运行的进程不是 /usr/local/bin/c 本身，说明是远程拉取或通过其他文件运行
   if [[ "$0" != "${SHORTCUT}" ]]; then
-    # 强制从你的 GitHub 仓库拉取最新版并写入快捷键路径
     if curl -fsSL "${SCRIPT_URL}" -o "${SHORTCUT}" 2>/dev/null; then
       chmod +x "${SHORTCUT}" 2>/dev/null || true
       echo -e "${GRN}[提示] 全局快捷键 'c' 已更新至 v${SCRIPT_VERSION}。${NC}"
