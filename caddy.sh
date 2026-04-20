@@ -2,9 +2,9 @@
 set -euo pipefail
 
 # ==========================================
-# Caddy 核心管理脚本 (L4 分流增强版 v7.5)
+# Caddy 核心管理脚本 (L4 分流增强版 v7.6)
 # ==========================================
-SCRIPT_VERSION="7.5"
+SCRIPT_VERSION="7.6"
 CADDYFILE="/etc/caddy/Caddyfile"
 CADDY_BIN="/usr/bin/caddy"
 SERVICE_FILE="/etc/systemd/system/caddy.service"
@@ -32,7 +32,6 @@ need_root() {
   fi
 }
 
-# 修复系统 sudo 无法解析主机名的警告 (自愈功能)
 fix_hostname_resolve() {
   local current_hostname
   current_hostname=$(hostname 2>/dev/null || true)
@@ -74,9 +73,18 @@ apply_config() {
 check_domain_exists() {
   local domain="$1"
   if grep -q "# --- \[DOMAIN: ${domain}\] ---" "${CADDYFILE}"; then
-    echo -e "${RED}[警告] 域名/SNI [${domain}] 已存在，请先删除旧配置或使用其他域名。${NC}"
-    pause_return_menu
-    return 1
+    echo -e "${YEL}[提示] 域名/SNI [${domain}] 已存在。${NC}"
+    read -r -p "确定要覆盖它吗？[y/N]: " confirm
+    if [[ "${confirm,,}" == "y" ]]; then
+      # 删除旧的规则块，准备写入新的
+      sed -i "/# --- \[DOMAIN: ${domain}\] ---/,/# --- \[\/DOMAIN: ${domain}\] ---/d" "${CADDYFILE}"
+      echo -e "${GRN}[提示] 旧配置已清理，正在写入新配置...${NC}"
+      return 0
+    else
+      echo "已取消覆盖。"
+      pause_return_menu
+      return 1
+    fi
   fi
   return 0
 }
@@ -203,7 +211,12 @@ option_add_proxy() {
   echo "1. L4 纯透传 (443端口按SNI分流)"
   echo "2. L7 七层反代 (网站 / 面板 / WS)"
   read -r -p "请选择 [1-2]: " mode
-  if [[ "$mode" != "1" && "$mode" != "2" ]]; then echo -e "${RED}[警告] 无效选项！${NC}"; pause_return_menu; return; fi
+  
+  if [[ "$mode" != "1" && "$mode" != "2" ]]; then 
+    echo -e "${RED}[警告] 无效选项！${NC}"
+    pause_return_menu
+    return
+  fi
 
   local domain target note tmp_l4 tmp_l7 clean_domain
   tmp_l4=$(mktemp)
@@ -211,10 +224,18 @@ option_add_proxy() {
 
   if [[ "$mode" == "1" ]]; then
     read -r -p "请输入 SNI 伪装域名: " domain
-    [[ -z "${domain}" ]] && { echo -e "${RED}[警告] 输入不能为空！${NC}"; pause_return_menu; return; }
+    if [[ -z "${domain}" ]]; then 
+      echo -e "${RED}[警告] 输入不能为空！${NC}"
+      pause_return_menu
+      return
+    fi
     
     read -r -p "请输入后端本地端口: " target
-    [[ -z "${target}" ]] && { echo -e "${RED}[警告] 输入不能为空！${NC}"; pause_return_menu; return; }
+    if [[ -z "${target}" ]]; then 
+      echo -e "${RED}[警告] 输入不能为空！${NC}"
+      pause_return_menu
+      return
+    fi
     
     read -r -p "请输入备注 (可选): " note
     
@@ -239,15 +260,29 @@ EOF
     echo "2. WebSocket 反代"
     echo "3. 反代他人服务 (传透真实IP与Host)"
     read -r -p "请选择 [1-3]: " l7_mode
-    if [[ "$l7_mode" != "1" && "$l7_mode" != "2" && "$l7_mode" != "3" ]]; then echo -e "${RED}[警告] 无效选项！${NC}"; pause_return_menu; return; fi
-
-    read -r -p "请输入域名 (如 www.example.com): " domain
-    [[ -z "${domain}" ]] && { echo -e "${RED}[警告] 输入不能为空！${NC}"; pause_return_menu; return; }
     
-    read -r -p "请输入反代目标 (如 127.0.0.1:5000 或 www.example.com): " target
-    [[ -z "${target}" ]] && { echo -e "${RED}[警告] 输入不能为空！${NC}"; pause_return_menu; return; }
+    if [[ "$l7_mode" != "1" && "$l7_mode" != "2" && "$l7_mode" != "3" ]]; then 
+      echo -e "${RED}[警告] 无效选项！${NC}"
+      pause_return_menu
+      return
+    fi
 
-    # 智能补全：如果输入的是纯数字端口，自动拼接 127.0.0.1:
+    read -r -p "请输入域名: " domain
+    if [[ -z "${domain}" ]]; then 
+      echo -e "${RED}[警告] 输入不能为空！${NC}"
+      pause_return_menu
+      return
+    fi
+    
+    # 更改了这里的提示语
+    read -r -p "请输入反代目标 (如 127.0.0.1:5000 或 https://www.example.com): " target
+    if [[ -z "${target}" ]]; then 
+      echo -e "${RED}[警告] 输入不能为空！${NC}"
+      pause_return_menu
+      return
+    fi
+
+    # 智能补全本地端口
     if [[ "$target" =~ ^[0-9]+$ ]]; then
       target="127.0.0.1:${target}"
     fi
@@ -256,7 +291,9 @@ EOF
     if [[ "$l7_mode" == "2" ]]; then
       read -r -p "请输入 WebSocket 路径 (如 /ws): " ws_path
       if [[ -z "${ws_path}" || ! "$ws_path" =~ ^/ ]]; then 
-        echo -e "${RED}[警告] 路径不能为空且必须以 / 开头！${NC}"; pause_return_menu; return
+        echo -e "${RED}[警告] 路径不能为空且必须以 / 开头！${NC}"
+        pause_return_menu
+        return
       fi
     fi
 
