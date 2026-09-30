@@ -16,6 +16,9 @@ jobs:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
       
     steps:
+      - name: 0. 检出代码（供心跳提交用）
+        uses: actions/checkout@v4
+
       - name: 1. 检查并对比 Caddy 版本
         id: version_check
         run: |
@@ -78,3 +81,13 @@ jobs:
             caddy-linux-arm64
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          
+      - name: 7. 心跳：更新检查时间戳（防止定时任务被 GitHub 自动停用）
+        run: |
+          date -u +"%Y-%m-%dT%H:%M:%SZ" > .github/last-check.txt
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .github/last-check.txt
+          git diff --staged --quiet || git commit -m "chore: 定时检查心跳 $(date -u +%Y-%m-%d)"
+          git push
+
