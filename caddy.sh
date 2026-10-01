@@ -445,7 +445,7 @@ option_uninstall() {
 }
 
 show_menu() {
-  clear
+  clear 2>/dev/null || true
   echo -e "${BLU}=== Caddy 管理脚本 (L4分流版 v${SCRIPT_VERSION}) ===${NC}"
   echo "1) 安装/升级 Caddy"
   echo "2) 添加/更新 反代规则"
